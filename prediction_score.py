@@ -359,7 +359,7 @@ def show ():
     LP=values_predictions[1] # Obtain standardized linear predictors
     plot_values=list_for_plot(namesnew,LP,var_ann,exclude_age='Yes') # Values for plot
 
-    risk = np.round(np.float_(predscore*100),0)
+    risk = np.int_(np.round( predscore*100.0, 0 ))
     invrisk = 100- risk
     if risk < 1:
         riskout = "less than 1"
