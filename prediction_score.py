@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[34]:
+# In[17]:
 
 """
 Program to calculate 5-year risk of mortality.
@@ -211,13 +211,13 @@ def namesnewfun(clean_data):
     assert len(namesnew)==len(names), 'ERROR'
     return namesnew
 
-def list_for_plot(namesnew,LP,var_ann,exclude_age):
+def list_for_plot(namesnew,LP,var_ann,exclude_age,skip_indicator):
     '''
     This function has two parts:
     1. It finds the questions with same ID (normally one with and one without interaction with age) 
         and sum the linear predictors. Futher, is sort the variables based on abs(value).
     2. It get the descriptor of the question (from the var_ann file) and match it with the questions ID.
-        This is ueful for the plot.
+        This is ueful for the plot.    
     '''
     namesnew=np.array(namesnew)
     LP=np.array(LP)
@@ -228,18 +228,28 @@ def list_for_plot(namesnew,LP,var_ann,exclude_age):
         unique_LP.append(LP[namesnew == group].sum())
         Sunique_namesnew = [i[0] for i in sorted(zip(unique_namesnew, unique_LP), key=lambda l: abs(l[1]))]
         Sunique_LP=sorted(unique_LP, key=abs)
-    
     ASunique_namesnew=[]
     # match variable ID with label
     for i in Sunique_namesnew:
         for k,j in enumerate(var_ann['f0']):
             if j==i:
-                ASunique_namesnew.append(var_ann['f1'][k])
+                ASunique_namesnew.append(var_ann['f1'][k])            
     # Exclude age is requested
     if exclude_age == 'Yes':
         index_age=ASunique_namesnew.index('Age')
         del ASunique_namesnew[index_age]
         del Sunique_LP[index_age]
+    # Exclude f.1249 if current smoker
+    if skip_indicator[0] == 1:
+        index_1249=ASunique_namesnew.index('Past tobacco smoking')
+        del ASunique_namesnew[index_1249]
+        del Sunique_LP[index_1249]
+    # Exclude f.6141 is living alone
+    if skip_indicator[1] == 1:
+        index_6141=ASunique_namesnew.index('How are people in household related to participant')
+        del ASunique_namesnew[index_6141]
+        del Sunique_LP[index_6141]
+    
     assert len(ASunique_namesnew)==len(Sunique_LP), 'ERROR'
     return(ASunique_namesnew,Sunique_LP)
 
@@ -305,9 +315,30 @@ class Predscore_final(object):
     
     
     def assertion_data(self):
+        '''
+        Function that does checks on the processed data
+        also check that all the parameters in the answer file are among the elegible values
+        finally, it output a 1 if some questions need to be skipped in the tornado plot, otherwise 0
+        '''
+        
         assert len(self.d) > 1, 'ERROR'
         assert self.d[0,0] == 'age' , 'ERROR'
         assert np.array_equal(np.unique(self.d[:,0]),np.unique(self.coef['f0'])), 'ERROR'
+
+        for i,j in enumerate(self.d[:,1]):
+            if self.d[i,0] != 'age':    
+                assert j in self.coef['f1'],'ERROR'
+        
+        if self.d[self.d[:,0] == ['f.1239.0.0'],1]=='Yes, on most or all days':
+            indicator1239=1
+        else:
+            indicator1239=0
+        if 'Live alone' in self.d[self.d[:,0] == ['f.6141.0'],1]:
+            indicator6141=1
+        else:
+            indicator6141=0
+        return (indicator1239,indicator6141)    
+            
         
     def bioage(self):
         '''
@@ -344,9 +375,8 @@ def show ():
     # Define functions and process data
     fun_to_run = Predscore_final(d,age,sex,directory)
     clean_data=fun_to_run.sex_load() # Clean data
-    fun_to_run.assertion_data() # Do tests
-    print 
-    
+    skip_indicator=fun_to_run.assertion_data() # Do tests and output values for skipping questions in tornado plot
+
     values_predictions=fun_to_run.calculate_risk()
     predscore=values_predictions[0] # Prediction score
     assert predscore < 1 and predscore > 0, 'ERROR'
@@ -357,7 +387,7 @@ def show ():
     # The functions below are used for the plot
     namesnew=namesnewfun(clean_data) # Obtain variables names
     LP=values_predictions[1] # Obtain standardized linear predictors
-    plot_values=list_for_plot(namesnew,LP,var_ann,exclude_age='Yes') # Values for plot
+    plot_values=list_for_plot(namesnew,LP,var_ann,exclude_age='Yes',skip_indicator=skip_indicator) # Values for plot
 
     risk = np.int_(np.round( predscore*100.0, 0 ))
     invrisk = 100- risk
@@ -370,7 +400,7 @@ def show ():
     
     # Below the output
     sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage[0])) + ';' + str(np.float_(bioage[1])) + ';' + str(predscore) + ';' + str(riskout) + ';' + str(invriskout) + ';')
-    for i in range(1,len(plot_values[0])):
+    for i in range(0,len(plot_values[0])):
         sys.stdout.write(plot_values[0][i] + ' = ' + str(plot_values[1][i]) + ';')
 
 show()
