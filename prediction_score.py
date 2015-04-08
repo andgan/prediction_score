@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[17]:
+# In[372]:
 
 """
 Program to calculate 5-year risk of mortality.
@@ -19,27 +19,29 @@ Program to calculate 5-year risk of mortality.
     4. wwFage.csv (weights for females)
     5. MM095.csv (5-year survival probabilities from lifetables, males)
     6. FF095.csv (5-year survival probabilities from lifetables, females)
-    7. var_annotation.txt (annotation names for corresponding question ID)
+    7. varcovM.csv (file with the variance-covariance matrix for males)
+    8. varcovF.csv (file with the variance-covariance matrix for females)
     
     Returns
     -------
     1. A string containing the following parameters separated by ;
         1. Age
         2. Sex
-        3. UBBLE age
+        3. UBBLE age with 95% C.I.
         4. Risk from lifetable corresponding to the real age
         5. Predicted risk
         6. Number of deaths within 100 individuals with same risk profile
         7. Number of alives within 100 individuals with same risk profile
-        8. Values used in the tornado plot with the format 'name variable = sum[beta(x-M)]'
+        8. Values used in the tornado plot with the format 'name variable = sum[beta(x-M)] [95% C.I.]'
 
 """
 
 import numpy as np
 import math as mt
+from scipy.stats import norm
 import sys
 import os.path
-
+import itertools
 
 def skip_d(d):
     '''
@@ -166,94 +168,60 @@ def reform_array_mean(name_var,coef):
 
 def calculate_lp(pars,means,coefs,name_var,d,age):
     '''
-    Function to calculate the linear predictor for each variable
+    Function to calculate the linear predictor [coef*(x-mean)] and standardized value (x-mean) for each variable
     '''
     name_par = d[d[:,0] == name_var,1]
     lp = 0
-    for i in enumerate(pars):
-        j = 0
+    xmean = []
+    for i,j in enumerate(pars):   
+        f = 0
         for k in name_par:
-            if i[1] == k:
-                j = j+1
-        if j == 0:
-            tind = i[0]
-            t = (0-means[tind])*coefs[tind] 
+            if j == k:
+                f = f+1
+        if f == 0:
+            if coefs[i] == 0:
+                continue       
+            xmean0 = 0-means[i]
+            lp0 = xmean0*coefs[i]
         else:
             if name_var[0:5] == 'f.age': #If age interaction then use formula (age-mean) * coef
-                tind = i[0]
-                t = (age-means[tind])*coefs[tind]  
+                if coefs[i] == 0:
+                    continue       
+                xmean0 = age-means[i]
+                lp0 = xmean0*coefs[i]
             else:
-                tind = i[0]
-                t = (1-means[tind])*coefs[tind]  
-        lp += t
-    return lp
+                if coefs[i] == 0:
+                    continue       
+                xmean0 = 1-means[i]
+                lp0 = xmean0*coefs[i]
+        xmean.append(xmean0)
+        lp += lp0
+    return lp, xmean
 
 def age_lp(age,coef):
     
     '''
     Function to calculate the linear predictor for age
     '''
-    return (np.int_(age)-coef[0,][3])*coef[0,][2]
+    xmean=[age-coef[0,][3]]
+    lp=xmean[0]*coef[0,][2]
+    return lp, xmean
 
-def namesnewfun(clean_data):
-    '''
-    Function to extract the name of the variable even in case of interaction
-    '''
-    names=np.unique(clean_data[:,0])
-    namesnew=[]
-    for i in names:
-        if i[0:3] != 'age':
-            names1=i.translate(None, 'age:')
-            names2=names1.split (".", 2)[1]        
-        else:
-            names2=i
-        namesnew.append(names2)
-    assert len(namesnew)==len(names), 'ERROR'
-    return namesnew
 
-def list_for_plot(namesnew,LP,var_ann,exclude_age,skip_indicator):
+def delta_method(gd,varcovSel):
     '''
-    This function has two parts:
-    1. It finds the questions with same ID (normally one with and one without interaction with age) 
-        and sum the linear predictors. Futher, is sort the variables based on abs(value).
-    2. It get the descriptor of the question (from the var_ann file) and match it with the questions ID.
-        This is ueful for the plot.    
+    Delta method. Since the first derivative (gd) of coef*(x-m) = x-m, 
+    not formal derivative function is used.
     '''
-    namesnew=np.array(namesnew)
-    LP=np.array(LP)
-    assert len(namesnew)==len(LP), 'ERROR'
-    unique_namesnew = np.unique(namesnew)
-    unique_LP=[]
-    for group in unique_namesnew:
-        unique_LP.append(LP[namesnew == group].sum())
-        Sunique_namesnew = [i[0] for i in sorted(zip(unique_namesnew, unique_LP), key=lambda l: abs(l[1]))]
-        Sunique_LP=sorted(unique_LP, key=abs)
-    ASunique_namesnew=[]
-    # match variable ID with label
-    for i in Sunique_namesnew:
-        for k,j in enumerate(var_ann['f0']):
-            if j==i:
-                ASunique_namesnew.append(var_ann['f1'][k])            
-    # Exclude age is requested
-    if exclude_age == 'Yes':
-        index_age=ASunique_namesnew.index('Age')
-        del ASunique_namesnew[index_age]
-        del Sunique_LP[index_age]
-    # Exclude f.1249 if current smoker
-    if skip_indicator[0] == 1:
-        index_1249=ASunique_namesnew.index('Past tobacco smoking')
-        del ASunique_namesnew[index_1249]
-        del Sunique_LP[index_1249]
-    # Exclude f.6141 is living alone
-    if skip_indicator[1] == 1:
-        index_6141=ASunique_namesnew.index('How are people in household related to participant')
-        del ASunique_namesnew[index_6141]
-        del Sunique_LP[index_6141]
-    
-    assert len(ASunique_namesnew)==len(Sunique_LP), 'ERROR'
-    return(ASunique_namesnew,Sunique_LP)
+    assert len(varcovSel)==len(gd), 'ERROR'
+    varcovSel = varcovSel.astype(float)
+    deriv1 = np.dot(np.transpose(gd),varcovSel) # Delta-method: gd %*% vcov %*% gd
+    assert np.dot(gd,deriv1) > 0, 'ERROR'
+    stderr = np.sqrt(np.dot(gd,deriv1))
+    assert stderr > 0, 'ERROR'
+    return stderr
 
-    
+
 class Predscore_final(object):
     
     def __init__ (self, d, age, sex, directory):
@@ -262,15 +230,17 @@ class Predscore_final(object):
         self.sex=sex
         self.directory=directory 
         
-    def sex_load(self):
+    def data_load_and_process(self):
         '''
         Initial data process, output a clean dataset that is used to calculate the linear predictors
+        Output: Clean orginal data
         '''
         if  self.sex == 'Male':
             self.coef = np.loadtxt(fname=self.directory +'/coefM.txt', delimiter='\t',dtype={'names': ('f0', 'f1', 'f2','f3'),'formats': ('S40', 'S100', '<f8','<f8')}, usecols=(0,1,2,3))
             self.basehaz=0.0127703  
             self.wwage = np.loadtxt(fname=self.directory + '/wwMage.csv', delimiter=',', dtype='<f8')
             self.S095 = np.loadtxt(fname=self.directory + '/MM095.csv', delimiter=',', dtype='<f8')
+            self.varcov = np.loadtxt(fname=self.directory + '/varcovM.csv', delimiter=',', dtype='S100')
             # Determine which variable are interacting with age
             interact_var = ['f.709.0.0','f.6141.0','f.924.0.0','f.2443.0.0','f.2453.0.0','f.6150.0','f.6146.0']
             # These functions set the data in the right format
@@ -283,6 +253,7 @@ class Predscore_final(object):
             self.basehaz=0.007218876
             self.wwage = np.loadtxt(fname=self.directory + '/wwFage.csv', delimiter=',', dtype='<f8')
             self.S095 = np.loadtxt(fname=self.directory + '/FF095.csv', delimiter=',', dtype='<f8')
+            self.varcov = np.loadtxt(fname=self.directory + '/varcovF.csv', delimiter=',', dtype='S100')
             # Determine which variable are interacting with age
             interact_var = ['f.2453.0.0','f.6146.0']
             # These functions set the data in the right format
@@ -291,64 +262,201 @@ class Predscore_final(object):
             self.d=deal_with_zeros(self.d)
             self.d=add_interaction(interact_var,self.d)
         return self.d     
-       
-    def calculate_risk(self):
+
+    
+    def _assertion_data(self):
         '''
-        Calculate the individual risk and
-        report the largest and smallest linear predictor beside age and age*var interaction
+        Function that does checks on the processed data
+        also check that all the parameters in the answer file are among the elegible values
+        and that the variables are in the same order as in the coef file
+        finally, it output if some questions need to be skipped in the tornado plot
         '''
-        LP=[]
-        for i in np.unique(self.d[:,0]):
+        
+        varnamed = self.d[:,0]
+        varnamecoef = self.coef['f0']
+        
+        assert len(self.d) > 1, 'ERROR'
+        assert varnamed[0] == 'age' , 'ERROR'
+         
+        indexes1 = np.unique(varnamed, return_index=True)[1]
+        indexes2 = np.unique(varnamecoef, return_index=True)[1]
+        assert np.array_equal([varnamed[index1] for index1 in sorted(indexes1)],[varnamecoef[index2] for index2 in sorted(indexes2)]), 'ERROR'
+        
+        for i,j in enumerate(self.d[:,1]):
+            if varnamed[i] != 'age':    
+                assert j in self.coef['f1'],'ERROR'        
+
+        if self.d[varnamed == ['f.1239.0.0'],1]=='Yes, on most or all days':
+            self.indicator1239=1
+        else:
+            self.indicator1239=0
+        if 'Live alone' in self.d[varnamed == ['f.6141.0'],1]:
+            self.indicator6141=1
+        else:
+            self.indicator6141=0
+            
+            
+    def _calculate_LP_xmean(self):
+        '''
+        Calculate linear predictors and xmean for subsequent use
+        '''
+        
+        self._assertion_data() # Run checking and assign some values needed later
+        
+
+        _ , idx=np.unique(self.d[:,0],return_index=True) #Get unique names, but preserving the order
+        names=self.d[np.sort(idx),0] 
+        
+        self.LP = []
+        self.Xmean = []
+        
+        for i in names:
             if i =='age':
-                lp = age_lp(self.age,self.coef)
+                lpstd= age_lp(self.age,self.coef)
+                lp, xmean  = lpstd
             else:
                 coefs=reform_array_coef(i, self.coef)
                 means=reform_array_mean(i, self.coef)
                 pars=reform_array_par(i, self.coef)
-                lp=calculate_lp(pars,means,coefs,i,self.d,self.age)
-            LP.append(lp) 
-        lp_risk=sum(LP)    
+                lpstd=calculate_lp(pars,means,coefs,i,self.d,self.age)
+                lp, xmean = lpstd # Linear predictors coef*(x-mean), standardized value = 1 derivative = x-mean   
+            self.LP.append(lp)
+            self.Xmean.append(xmean)  
+            assert len(self.LP) == len(self.Xmean) , 'ERROR'
+ 
+
+    def calculate_risk(self):
+        '''
+        Calculate the predicted risk and the confidence intervales using delta method
+        Output: 1. Predicted risk 2.3: Predicted risk C.I.
+        
+        '''
+                
+        self._calculate_LP_xmean() # to extract qunatities needed
+        
+        Xmean = list(itertools.chain.from_iterable(self.Xmean))
+        
+        stderr = delta_method(Xmean,self.varcov[1:,1:]) # Get standard error for linear predictor
+        
+        lp_risk=sum(self.LP)
         w = self.wwage[self.wwage[:,0] == self.age ,1] # Obtain the right weights
         MMt = mt.exp(-self.basehaz * w) # Weight the baseline hazard
+        #MMt=mt.exp(-self.basehaz)
         self.predscore = 1-(MMt**mt.exp(lp_risk)) #
-        return (self.predscore,LP)
+        
+        self.predscoreL = 1-(MMt**mt.exp(lp_risk-norm.ppf(0.975)*stderr))
+        self.predscoreU = 1-(MMt**mt.exp(lp_risk+norm.ppf(0.975)*stderr))
+        
+        return self.predscore, self.predscoreL, self.predscoreU
     
     
-    def assertion_data(self):
-        '''
-        Function that does checks on the processed data
-        also check that all the parameters in the answer file are among the elegible values
-        finally, it output a 1 if some questions need to be skipped in the tornado plot, otherwise 0
-        '''
-        
-        assert len(self.d) > 1, 'ERROR'
-        assert self.d[0,0] == 'age' , 'ERROR'
-        assert np.array_equal(np.unique(self.d[:,0]),np.unique(self.coef['f0'])), 'ERROR'
-
-        for i,j in enumerate(self.d[:,1]):
-            if self.d[i,0] != 'age':    
-                assert j in self.coef['f1'],'ERROR'
-        
-        if self.d[self.d[:,0] == ['f.1239.0.0'],1]=='Yes, on most or all days':
-            indicator1239=1
-        else:
-            indicator1239=0
-        if 'Live alone' in self.d[self.d[:,0] == ['f.6141.0'],1]:
-            indicator6141=1
-        else:
-            indicator6141=0
-        return (indicator1239,indicator6141)    
-            
-        
     def bioage(self):
         '''
         Find closest value to values in array:
-        Used to find the biological age
-        Find the risk from lifetables corresponding to the true age
+        Output: 1.biological age, 2,3.biological age C.I.
+        4.the risk from lifetables corresponding to the true age
         '''
         idx = (np.abs(self.S095[:,1]-(1-self.predscore))).argmin()
-        realriskage=1-self.S095[self.S095[:,0]==self.age,1]
-        return [self.S095[idx,0],realriskage]
+        idxL = (np.abs(self.S095[:,1]-(1-self.predscoreL))).argmin()
+        idxU = (np.abs(self.S095[:,1]-(1-self.predscoreU))).argmin()
+        
+        realriskage = 1-self.S095[self.S095[:,0]==self.age,1]
+        
+        bioage = self.S095[idx,0]
+        bioageL = self.S095[idxL,0]
+        bioageU = self.S095[idxU,0]
+        
+        return bioage, bioageL, bioageU, realriskage
+
+    
+    def _namesnewfun(self):
+        '''
+        Function to extract the name of the variable even in case of interaction
+        '''
+        _ , idx=np.unique(self.d[:,0],return_index=True) #Get unique names, but preserving the order
+        names=self.d[np.sort(idx),0]
+        self.namesnew=[]
+        for i in names:
+            if i[0:3] != 'age':
+                names1=i.translate(None, 'age:')
+                names2=names1.split (".", 2)[1]        
+            else:
+                names2=i
+            self.namesnew.append(names2)
+        assert len(self.namesnew)==len(names), 'ERROR'
+
+    
+    
+    def _unique_lp_stderr_tornado(self):
+        '''
+         1. It finds the questions with same ID (normally one with and one without interaction with age) 
+            and:
+            a. sums the linear predictors within questions
+            b. founds the correct variance covariance matrix subset
+         2. It calculates the standard errors based on the delta-method
+        '''
+        
+        self._namesnewfun() # to extract the variables names
+        
+        namesnew=np.array(self.namesnew)
+        LP=np.array(self.LP, dtype=object)
+        Xmean=np.array(self.Xmean, dtype=object)
+        
+        _, idx = np.unique(namesnew, return_index=True) #Get unique names, but preserving the order
+        self.unique_namesnew = namesnew[np.sort(idx)].tolist()
+        
+        self.unique_LP=[]
+        self.unique_stder=[]
+        
+        for group in self.unique_namesnew:
+            sumgroup = sum(LP[namesnew == group])
+            self.unique_LP.append(sumgroup) # Sum LP within each variable
+            
+            # Obtain correct subset of varcovar matrix
+            b = self.varcov[:,0]==group
+            rowsel = self.varcov[b,:]
+            varcovSel = rowsel[:,b]
+
+            # Obtain standard errors
+            if group != 'age': 
+                gd = np.concatenate(Xmean[namesnew == group])
+            else:
+                gd = Xmean[namesnew == group][0]
+                
+            stderr = delta_method(gd,varcovSel) #Delta-method
+            self.unique_stder.append(stderr)
+        
+    
+    def list_for_plot(self,exclude_age):
+        '''
+        Skip some question if needed 
+        Output: 1. New variable name; 2. Linear predictor; 3.Standard errors 
+        
+        '''     
+        self._unique_lp_stderr_tornado() # Creates names, lp and stderrors
+        # Exclude age is requested
+        if exclude_age == 'Yes':
+            index_age=self.unique_namesnew.index('age')
+            del self.unique_namesnew[index_age]
+            del self.unique_LP[index_age]
+            del self.unique_stder[index_age]
+        # Exclude f.1249 if current smoker
+        if self.indicator1239 == 1:
+            index_1249=self.unique_namesnew.index('1249')
+            del self.unique_namesnew[index_1249]
+            del self.unique_LP[index_1249]
+            del self.unique_stder[index_1249]
+        # Exclude f.6141 is living alone
+        if self.indicator6141 == 1:
+            index_6141=self.unique_namesnew.index('6141')
+            del self.unique_namesnew[index_6141]
+            del self.unique_LP[index_6141]
+            del self.unique_stder[index_6141]
+            
+        assert len(self.unique_namesnew)==len(self.unique_LP), 'ERROR'
+        return self.unique_namesnew, self.unique_LP, self.unique_stder
+
+
 
 def show ():
     ''' 
@@ -361,33 +469,27 @@ def show ():
     assert os.path.isdir(directory), 'ERROR'
     
     fname = directory + '/' + sys.argv[1]
-    assert os.path.isfile(fname), 'File does not exist'
+    assert os.path.isfile(fname), 'ERROR'
     
     d = np.loadtxt(fname=fname, delimiter='\t',dtype='S100') # Read external file containing questionnaire results
     age=np.int_(d[d[:,0] == ['age'],1][0])
-    assert issubclass(type(age), np.integer) and (age > 39 and age < 71), 'Wrong format for age or age out of age-limits'
+    assert issubclass(type(age), np.integer) and (age > 39 and age < 71), 'ERROR'
     
     sex=np.str_(d[d[:,0] == ['Sex'],1][0])
     assert sex == 'Male' or sex == 'Female', 'ERROR'
   
-    var_ann=np.loadtxt(fname=directory +'/var_annotation.txt', delimiter='\t',dtype={'names': ('f0', 'f1'),'formats': ('S100', 'S100')}, usecols=(0,1))
-
     # Define functions and process data
     fun_to_run = Predscore_final(d,age,sex,directory)
-    clean_data=fun_to_run.sex_load() # Clean data
-    skip_indicator=fun_to_run.assertion_data() # Do tests and output values for skipping questions in tornado plot
-
-    values_predictions=fun_to_run.calculate_risk()
-    predscore=values_predictions[0] # Prediction score
+    
+    clean_data=fun_to_run.data_load_and_process() # Clean data
+    
+    predscore, predscoreL, predscoreU = fun_to_run.calculate_risk() # Prediction score
     assert predscore < 1 and predscore > 0, 'ERROR'
     
-    bioage=fun_to_run.bioage() # Biological age
-    assert bioage[0] > 14 and bioage[0] < 96, 'ERROR'
+    bioage, bioageL, bioageU, realriskage = fun_to_run.bioage() # Biological age
+    assert bioage > 14 and bioage < 96, 'ERROR'
     
-    # The functions below are used for the plot
-    namesnew=namesnewfun(clean_data) # Obtain variables names
-    LP=values_predictions[1] # Obtain standardized linear predictors
-    plot_values=list_for_plot(namesnew,LP,var_ann,exclude_age='Yes',skip_indicator=skip_indicator) # Values for plot
+    categoryname, stdLP, STDERR = fun_to_run.list_for_plot(exclude_age='Yes') # Values for plot
 
     risk = np.int_(np.round( predscore*100.0, 0 ))
     invrisk = 100- risk
@@ -399,14 +501,12 @@ def show ():
         invriskout=invrisk
     
     # Below the output
-    sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage[0])) + ';' + str(np.float_(bioage[1])) + ';' + str(predscore) + ';' + str(riskout) + ';' + str(invriskout) + ';')
-    for i in range(0,len(plot_values[0])):
-        sys.stdout.write(plot_values[0][i] + ' = ' + str(plot_values[1][i]) + ';')
+    sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage)) + "[" + str(np.int_(bioageL)) + ";" 
+                     + str(np.int_(bioageU)) + "]" + ';' + str(np.float_(realriskage)) + ';' + str(predscore) + ';' 
+                     + str(riskout) + ';' + str(invriskout) + ';')
+    for i in range(0,len(categoryname)):
+        sys.stdout.write(categoryname[i] + ' = ' + str(stdLP[i]) + "[" + str(stdLP[i]-norm.ppf(0.975)*STDERR[i]) + ";" 
+                         + str(stdLP[i]+norm.ppf(0.975)*STDERR[i]) +  "]" + ';')
 
 show()
-
-
-# In[ ]:
-
-
 
