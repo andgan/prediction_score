@@ -501,12 +501,12 @@ def show ():
         invriskout=invrisk
     
     # Below the output
-    sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage)) + "[" + str(np.int_(bioageL)) + ";" 
-                     + str(np.int_(bioageU)) + "]" + ';' + str(np.float_(realriskage)) + ';' + str(predscore) + ';' 
+    sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage)) + "|" + str(np.int_(bioageL)) + "|" 
+                     + str(np.int_(bioageU)) + ';' + str(np.float_(realriskage)) + ';' + str(predscore) + ';' 
                      + str(riskout) + ';' + str(invriskout) + ';')
     for i in range(0,len(categoryname)):
-        sys.stdout.write(categoryname[i] + ' = ' + str(stdLP[i]) + "[" + str(stdLP[i]-norm.ppf(0.975)*STDERR[i]) + ";" 
-                         + str(stdLP[i]+norm.ppf(0.975)*STDERR[i]) +  "]" + ';')
+        sys.stdout.write(categoryname[i] + ' = ' + str(stdLP[i]) + "|" + str(stdLP[i]-norm.ppf(0.975)*STDERR[i]) + "|" 
+                         + str(stdLP[i]+norm.ppf(0.975)*STDERR[i]) + ';')
 
 show()
 
