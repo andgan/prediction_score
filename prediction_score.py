@@ -32,8 +32,7 @@ Program to calculate 5-year risk of mortality.
         5. Predicted risk
         6. Number of deaths within 100 individuals with same risk profile
         7. Number of alives within 100 individuals with same risk profile
-        8. Values used in the tornado plot with the format 'name variable = sum[beta(x-M)] [95% C.I.]'
-
+  
 """
 
 import numpy as np
@@ -269,7 +268,7 @@ class Predscore_final(object):
         Function that does checks on the processed data
         also check that all the parameters in the answer file are among the elegible values
         and that the variables are in the same order as in the coef file
-        finally, it output if some questions need to be skipped in the tornado plot
+
         '''
         
         varnamed = self.d[:,0]
@@ -285,15 +284,6 @@ class Predscore_final(object):
         for i,j in enumerate(self.d[:,1]):
             if varnamed[i] != 'age':    
                 assert j in self.coef['f1'],'ERROR'        
-
-        if self.d[varnamed == ['f.1239.0.0'],1]=='Yes, on most or all days':
-            self.indicator1239=1
-        else:
-            self.indicator1239=0
-        if 'Live alone' in self.d[varnamed == ['f.6141.0'],1]:
-            self.indicator6141=1
-        else:
-            self.indicator6141=0
             
             
     def _calculate_LP_xmean(self):
@@ -341,7 +331,6 @@ class Predscore_final(object):
         lp_risk=sum(self.LP)
         w = self.wwage[self.wwage[:,0] == self.age ,1] # Obtain the right weights
         MMt = mt.exp(-self.basehaz * w) # Weight the baseline hazard
-        #MMt=mt.exp(-self.basehaz)
         self.predscore = 1-(MMt**mt.exp(lp_risk)) #
         
         self.predscoreL = 1-(MMt**mt.exp(lp_risk-norm.ppf(0.975)*stderr))
@@ -367,95 +356,6 @@ class Predscore_final(object):
         bioageU = self.S095[idxU,0]
         
         return bioage, bioageL, bioageU, realriskage
-
-    
-    def _namesnewfun(self):
-        '''
-        Function to extract the name of the variable even in case of interaction
-        '''
-        _ , idx=np.unique(self.d[:,0],return_index=True) #Get unique names, but preserving the order
-        names=self.d[np.sort(idx),0]
-        self.namesnew=[]
-        for i in names:
-            if i[0:3] != 'age':
-                names1=i.translate(None, 'age:')
-                names2=names1.split (".", 2)[1]        
-            else:
-                names2=i
-            self.namesnew.append(names2)
-        assert len(self.namesnew)==len(names), 'ERROR'
-
-    
-    
-    def _unique_lp_stderr_tornado(self):
-        '''
-         1. It finds the questions with same ID (normally one with and one without interaction with age) 
-            and:
-            a. sums the linear predictors within questions
-            b. founds the correct variance covariance matrix subset
-         2. It calculates the standard errors based on the delta-method
-        '''
-        
-        self._namesnewfun() # to extract the variables names
-        
-        namesnew=np.array(self.namesnew)
-        LP=np.array(self.LP, dtype=object)
-        Xmean=np.array(self.Xmean, dtype=object)
-        
-        _, idx = np.unique(namesnew, return_index=True) #Get unique names, but preserving the order
-        self.unique_namesnew = namesnew[np.sort(idx)].tolist()
-        
-        self.unique_LP=[]
-        self.unique_stder=[]
-        
-        for group in self.unique_namesnew:
-            sumgroup = sum(LP[namesnew == group])
-            self.unique_LP.append(sumgroup) # Sum LP within each variable
-            
-            # Obtain correct subset of varcovar matrix
-            b = self.varcov[:,0]==group
-            rowsel = self.varcov[b,:]
-            varcovSel = rowsel[:,b]
-
-            # Obtain standard errors
-            if group != 'age': 
-                gd = np.concatenate(Xmean[namesnew == group])
-            else:
-                gd = Xmean[namesnew == group][0]
-                
-            stderr = delta_method(gd,varcovSel) #Delta-method
-            self.unique_stder.append(stderr)
-        
-    
-    def list_for_plot(self,exclude_age):
-        '''
-        Skip some question if needed 
-        Output: 1. New variable name; 2. Linear predictor; 3.Standard errors 
-        
-        '''     
-        self._unique_lp_stderr_tornado() # Creates names, lp and stderrors
-        # Exclude age is requested
-        if exclude_age == 'Yes':
-            index_age=self.unique_namesnew.index('age')
-            del self.unique_namesnew[index_age]
-            del self.unique_LP[index_age]
-            del self.unique_stder[index_age]
-        # Exclude f.1249 if current smoker
-        if self.indicator1239 == 1:
-            index_1249=self.unique_namesnew.index('1249')
-            del self.unique_namesnew[index_1249]
-            del self.unique_LP[index_1249]
-            del self.unique_stder[index_1249]
-        # Exclude f.6141 is living alone
-        if self.indicator6141 == 1:
-            index_6141=self.unique_namesnew.index('6141')
-            del self.unique_namesnew[index_6141]
-            del self.unique_LP[index_6141]
-            del self.unique_stder[index_6141]
-            
-        assert len(self.unique_namesnew)==len(self.unique_LP), 'ERROR'
-        return self.unique_namesnew, self.unique_LP, self.unique_stder
-
 
 
 def show ():
@@ -489,8 +389,6 @@ def show ():
     bioage, bioageL, bioageU, realriskage = fun_to_run.bioage() # Biological age
     assert bioage > 14 and bioage < 96, 'ERROR'
     
-    categoryname, stdLP, STDERR = fun_to_run.list_for_plot(exclude_age='Yes') # Values for plot
-
     risk = np.int_(np.round( predscore*100.0, 0 ))
     invrisk = 100- risk
     if risk < 1:
@@ -504,9 +402,5 @@ def show ():
     sys.stdout.write(str(age) + ';' + sex + ';' + str(np.int_(bioage)) + "|" + str(np.int_(bioageL)) + "|" 
                      + str(np.int_(bioageU)) + ';' + str(np.float_(realriskage)) + ';' + str(predscore) + ';' 
                      + str(riskout) + ';' + str(invriskout) + ';')
-    for i in range(0,len(categoryname)):
-        sys.stdout.write(categoryname[i] + ' = ' + str(stdLP[i]) + "|" + str(stdLP[i]-norm.ppf(0.975)*STDERR[i]) + "|" 
-                         + str(stdLP[i]+norm.ppf(0.975)*STDERR[i]) + ';')
-
+  
 show()
-
